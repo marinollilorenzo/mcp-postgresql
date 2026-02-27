@@ -138,7 +138,7 @@ async def validate_query(sql: str, ctx: Context) -> str:
         return _json({"success": False, "error": "sql è obbligatorio."})
 
     schema = await db_manager.get_full_schema()
-    validator = SQLValidator(schema=schema)
+    validator = SQLValidator(schema=schema, max_joins=srv_cfg.max_joins)
     result = validator.validate(sql)
 
     await ctx.info(
@@ -167,7 +167,7 @@ async def execute_query(sql: str, ctx: Context, skip_validation: bool = False) -
     # Validazione interna (sempre raccomandata)
     if not skip_validation:
         schema = await db_manager.get_full_schema()
-        validator = SQLValidator(schema=schema)
+        validator = SQLValidator(schema=schema, max_joins=srv_cfg.max_joins)
         validation = validator.validate(sql)
 
         if not validation.is_valid:
@@ -227,6 +227,18 @@ async def resource_table_schema(table_name: str) -> str:
         })
     return _json(table_info.to_dict())
 
+
+
+@mcp.resource(
+    "db://health",
+    name="Database Health",
+    description="Stato del server: latenza DB, pool connessioni, cache schema.",
+    mime_type="application/json",
+)
+async def resource_health() -> str:
+    """Health check del database e del pool di connessioni."""
+    health = await db_manager.health_check()
+    return _json(health)
 
 # ══════════════════════════════════════════════
 #  PROMPTS  (registrati dalle funzioni in prompts.py)

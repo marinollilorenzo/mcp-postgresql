@@ -41,8 +41,22 @@ class ServerConfig(BaseModel):
     transport: str = "stdio"
     sse_host: str = "0.0.0.0"
     sse_port: int = 8000
+
+    # Query limits
     query_row_limit: int = 500
     query_timeout: int = 30
+    max_joins: int = 8                  # numero massimo di JOIN per query
+
+    # Cache
+    schema_cache_ttl: int = 300         # secondi (0 = nessun TTL, cache infinita)
+
+    # Access control
+    # allowed_tables: se valorizzato, solo queste tabelle sono visibili agli agenti
+    # denied_tables:  queste tabelle vengono nascoste
+    # allowed_tables ha precedenza su denied_tables
+    allowed_tables: list[str] = []
+    denied_tables: list[str] = []
+
     log_level: str = "INFO"
 
     @field_validator("transport")
@@ -59,19 +73,30 @@ def load_config() -> tuple[DatabaseConfig, ServerConfig]:
     db_cfg = DatabaseConfig(
         host=os.getenv("DB_HOST", "localhost"),
         port=int(os.getenv("DB_PORT", "5432")),
-        name=os.environ["DB_NAME"],        # obbligatorio
-        user=os.environ["DB_USER"],        # obbligatorio
-        password=os.environ["DB_PASSWORD"],  # obbligatorio
+        name=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
         schema=os.getenv("DB_SCHEMA", "public"),
         min_pool=int(os.getenv("DB_MIN_POOL", "2")),
         max_pool=int(os.getenv("DB_MAX_POOL", "10")),
     )
+
+    def _parse_table_list(env_var: str) -> list[str]:
+        raw = os.getenv(env_var, "").strip()
+        if not raw:
+            return []
+        return [t.strip().lower() for t in raw.split(",") if t.strip()]
+
     srv_cfg = ServerConfig(
         transport=os.getenv("TRANSPORT", "stdio"),
         sse_host=os.getenv("SSE_HOST", "0.0.0.0"),
         sse_port=int(os.getenv("SSE_PORT", "8000")),
         query_row_limit=int(os.getenv("QUERY_ROW_LIMIT", "500")),
         query_timeout=int(os.getenv("QUERY_TIMEOUT", "30")),
+        max_joins=int(os.getenv("MAX_JOINS", "8")),
+        schema_cache_ttl=int(os.getenv("SCHEMA_CACHE_TTL", "300")),
+        allowed_tables=_parse_table_list("ALLOWED_TABLES"),
+        denied_tables=_parse_table_list("DENIED_TABLES"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
     return db_cfg, srv_cfg
