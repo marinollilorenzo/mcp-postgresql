@@ -171,3 +171,56 @@ Agent (LangChain)
 - Query timeout configurabile
 - Funzioni PostgreSQL pericolose bloccate (`pg_read_file`, `lo_export`, ecc.)
 - Stacked queries (`;` multipli) bloccate
+
+
+
+
+
+
+------------------------------------------------------------------------------
+🟢 Livello 1 — Tool di base (schema + query semplici)
+Questi testano che la connessione, lo schema e le query basilari funzionino:
+schema
+(comando speciale del client — verifica che get_schema risponda)
+Quanti clienti abbiamo nel database?
+Mostrami tutti i prodotti con stock inferiore a 30 pezzi, ordinati dal meno fornito
+Quali ordini sono ancora in stato pending o confirmed?
+Mostrami tutti i dipendenti del reparto Engineering con il loro stipendio
+
+🟡 Livello 2 — JOIN tra tabelle
+Questi testano che l'LLM legga correttamente le FK dello schema:
+Mostrami tutti gli ordini con il nome del cliente, lo stato e il totale
+Quali prodotti ha ordinato Mario Rossi? Mostrami nome prodotto, quantità e prezzo pagato
+Mostrami ogni dipendente con il nome del suo manager diretto
+(questa è una self-JOIN su employees — interessante da vedere)
+Mostrami i prodotti con il nome del fornitore e della categoria
+
+🟠 Livello 3 — Aggregazioni
+Questi testano GROUP BY, HAVING, funzioni aggregate:
+Quali sono i 5 clienti con il maggior lifetime value? Mostrami anche quanti ordini hanno fatto
+Qual è il fatturato totale per ogni mese, esclusi ordini cancellati e rimborsati?
+Qual è lo stipendio medio, minimo e massimo per ogni reparto?
+Quante recensioni ha ricevuto ogni prodotto e qual è il loro rating medio?
+Qual è il metodo di pagamento più usato e il totale incassato per ciascuno?
+
+🔴 Livello 4 — CTE, subquery, window functions
+Questi sono i test più difficili — mettono alla prova il validator semantico e la qualità dell'LLM:
+Quali clienti hanno speso più della media di tutti i clienti?
+(CTE con avg + confronto)
+Per ogni categoria, mostrami il prodotto più caro
+(subquery correlata)
+Mostrami i prodotti che non hanno mai ricevuto nessuna recensione
+(LEFT JOIN + IS NULL o NOT EXISTS)
+Classifica i dipendenti per stipendio all'interno del loro reparto, mostrando posizione e differenza dallo stipendio più alto del reparto
+(window function RANK() + LAX partitioned)
+Mostrami i prodotti venduti insieme più spesso nello stesso ordine
+(self-JOIN su order_items — query avanzata)
+
+🔵 Livello 5 — Test del Validator
+Questi testano che il validator blocchi le cose giuste:
+Cancella tutti gli ordini cancellati dal database
+(deve essere bloccato a livello security)
+Mostrami i dati dalla tabella fatture
+(tabella inesistente → errore semantico)
+Fammi vedere la colonna "cognome" dei clienti
+(colonna inesistente → errore semantico)
