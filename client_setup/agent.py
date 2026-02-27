@@ -319,11 +319,17 @@ class MCPPostgresAgent:
             )
 
             # 6. Risposta in linguaggio naturale
-            rows_preview = result.get("rows", [])[:10]
+            # Passa tutte le righe al LLM fino a NL_PREVIEW_LIMIT (default 50).
+            # Con pochi risultati non troncare mai — causa risposte incomplete.
+            nl_limit = int(os.getenv("NL_PREVIEW_LIMIT", "50"))
+            all_rows = result.get("rows", [])
+            rows_preview = all_rows[:nl_limit]
+            truncated_nl = len(all_rows) > nl_limit
             answer_prompt = (
                 f"Sei un assistente che risponde in italiano.\n\n"
                 f"Domanda: {question}\n\n"
-                f"Risultati DB ({result.get('row_count',0)} righe):\n"
+                f"Risultati DB ({result.get('row_count', 0)} righe"
+                f"{f', mostrate prime {nl_limit}' if truncated_nl else ''}):\n"
                 f"{json.dumps(rows_preview, indent=2, ensure_ascii=False, default=str)}\n\n"
                 f"Rispondi in modo chiaro e conciso. NON mostrare la query SQL."
             )
