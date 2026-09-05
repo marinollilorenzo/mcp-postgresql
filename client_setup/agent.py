@@ -27,8 +27,8 @@ from rich import box
 
 load_dotenv()
 
-# Aggiunge src/ al path per importare prompts.py
-_src_path = os.path.join(os.path.dirname(__file__), "..", "src")
+# Aggiunge server_setup/ al path per importare prompts.py
+_src_path = os.path.join(os.path.dirname(__file__), "..", "server_setup")
 sys.path.insert(0, os.path.abspath(_src_path))
 
 
@@ -75,7 +75,7 @@ def get_mcp_config() -> tuple[dict, str]:
     else:
         server_path = os.getenv(
             "MCP_SERVER_PATH",
-            os.path.join(os.path.dirname(__file__), "..", "src", "server.py"),
+            os.path.join(os.path.dirname(__file__), "..", "server_setup", "server.py"),
         )
         return {
             server_name: {

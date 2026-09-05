@@ -46,7 +46,7 @@ logger = logging.getLogger("mcp-postgres")
 db_manager = DatabaseManager(db_cfg, srv_cfg)
 
 # ──────────────────────────────────────────────
-#  Lifespan: connetti/disconnetti il DB
+#  FastMCP Lifespan: connetti/disconnetti il DB
 # ──────────────────────────────────────────────
 
 @asynccontextmanager
@@ -54,25 +54,25 @@ async def lifespan(server: FastMCP):
     """Gestisce il ciclo di vita del pool di connessioni al DB."""
     logger.info("Avvio server MCP PostgreSQL...")
     await db_manager.connect()
-    logger.info("Pool DB connesso. Server pronto.")
+    logger.info("Pool DB connesso. Server MCP pronto all'uso.")
     try:
         yield
     finally:
         await db_manager.disconnect()
         logger.info("Pool DB chiuso.")
 
+
 # ──────────────────────────────────────────────
-#  FastMCP server
+#  FastMCP server initialization
 # ──────────────────────────────────────────────
 
 mcp = FastMCP(
     name="mcp-postgres",
     instructions=(
-        "Server MCP per interrogare un database PostgreSQL. "
-        "Leggi la resource db://schema per vedere le tabelle disponibili. "
-        "Usa validate_query per verificare una query, poi execute_query per eseguirla. "
-        "Solo query SELECT sono permesse. "
-        "Usa refresh_schema_cache solo se la struttura del DB è cambiata."
+        "Server MCP per interrogare un database PostgreSQL aziendale. "
+        "Leggi la resource 'db://schema' per vedere la struttura delle tabelle. "
+        "Usa lo strumento 'validate_query' per verificare una query SQL, "
+        "e poi 'execute_query' per eseguirla. Solo query SELECT sono permesse."
     ),
     lifespan=lifespan,
     json_response=True,
@@ -96,9 +96,7 @@ def _json(obj: Any) -> str:
 
 
 # ══════════════════════════════════════════════
-#  TOOLS
-#  Solo azioni — la lettura dello schema avviene
-#  tramite le Resource (db://schema, db://table/{name})
+#  TOOLS (Azioni attive)
 # ══════════════════════════════════════════════
 
 @mcp.tool()
@@ -128,22 +126,23 @@ async def validate_query(sql: str, ctx: Context) -> str:
     2. Syntactic: verifica la sintassi PostgreSQL con sqlglot
     3. Semantic: controlla che tabelle e colonne esistano nello schema
 
-    Chiama questo tool PRIMA di execute_query.
+    Chiama questo tool PRIMA di execute_query per evitare errori a runtime.
 
     Args:
         sql: La query SQL da validare.
     """
     sql = sql.strip()
     if not sql:
-        return _json({"success": False, "error": "sql è obbligatorio."})
+        return _json({"success": False, "error": "Il parametro 'sql' è obbligatorio."})
 
     schema = await db_manager.get_full_schema()
-    validator = SQLValidator(schema=schema, max_joins=srv_cfg.max_joins)
-    result = validator.validate(sql)
+
+    validator = SQLValidator(max_joins=srv_cfg.max_joins)
+    result = validator.validate(sql=sql, schema=schema)
 
     await ctx.info(
         f"Validazione: {'OK' if result.is_valid else 'FALLITA'} "
-        f"(livelli: {result.validation_levels_passed})"
+        f"(livelli superati: {result.validation_levels_passed})"
     )
 
     return _json(result.to_dict())
@@ -153,59 +152,60 @@ async def validate_query(sql: str, ctx: Context) -> str:
 async def execute_query(sql: str, ctx: Context, skip_validation: bool = False) -> str:
     """
     Esegue una query SELECT sul database e restituisce i risultati in JSON.
-    La query viene eseguita in una transazione readonly.
-    Usa validate_query prima per assicurarti che la query sia corretta.
+    La query viene eseguita in una transazione readonly sicura.
+    È buona norma usare 'validate_query' prima di chiamare questo tool.
 
     Args:
         sql: La query SELECT da eseguire.
-        skip_validation: Se True salta la validazione interna (non raccomandato).
+        skip_validation: Se True salta la validazione interna (non raccomandato, default: False).
     """
     sql = sql.strip()
     if not sql:
-        return _json({"success": False, "error": "sql è obbligatorio."})
+        return _json({"success": False, "error": "Il parametro 'sql' è obbligatorio."})
 
-    # Validazione interna (sempre raccomandata)
+    # Validazione interna di sicurezza (sempre raccomandata prima di colpire il DB)
     if not skip_validation:
         schema = await db_manager.get_full_schema()
-        validator = SQLValidator(schema=schema, max_joins=srv_cfg.max_joins)
-        validation = validator.validate(sql)
+        
+        # FIX: Inizializzazione stateless del Validator
+        validator = SQLValidator(max_joins=srv_cfg.max_joins)
+        validation = validator.validate(sql=sql, schema=schema)
 
         if not validation.is_valid:
-            await ctx.warning(f"Query bloccata dalla validazione: {validation.errors}")
+            await ctx.warning(f"Esecuzione bloccata dalla validazione: {validation.errors}")
             return _json({
                 "success": False,
-                "error": "Query non valida. Usa validate_query per i dettagli.",
+                "error": "Query non valida o pericolosa. Dettagli nel campo 'validation'.",
                 "validation": validation.to_dict(),
             })
 
-    await ctx.info("Esecuzione query in corso...")
+    await ctx.info("Esecuzione query sul database in corso...")
     result = await db_manager.execute_query(sql)
 
     if result.get("success"):
-        await ctx.info(f"Query completata: {result['row_count']} righe restituite.")
+        await ctx.info(f"Query completata con successo: {result.get('row_count', 0)} righe estratte.")
     else:
-        await ctx.error(f"Errore query: {result.get('error')}")
+        await ctx.error(f"Errore durante l'esecuzione della query: {result.get('error')}")
 
     return _json(result)
 
-
 # ══════════════════════════════════════════════
-#  RESOURCES
+#  RESOURCES (Dati Passivi)
 # ══════════════════════════════════════════════
 
 @mcp.resource(
     "db://schema",
     name="Database Schema",
-    description="Schema completo del database PostgreSQL: tabelle, viste, colonne, PK e FK.",
+    description="Schema completo del database PostgreSQL aziendale: tabelle, viste, colonne, PK e FK.",
     mime_type="application/json",
 )
 async def resource_full_schema() -> str:
-    """Schema completo del database come risorsa MCP."""
+    """Esponi lo schema completo del database come risorsa MCP passiva."""
     schema = await db_manager.get_full_schema()
     schema_dict = {name: info.to_dict() for name, info in schema.items()}
     return _json({
         "database": db_cfg.name,
-        "pg_schema": db_cfg.schema,
+        "pg_schema": db_cfg.schema_name,  # FIX: Rinominato per allineamento Pydantic V2
         "tables": schema_dict,
     })
 
@@ -213,26 +213,25 @@ async def resource_full_schema() -> str:
 @mcp.resource(
     "db://table/{table_name}",
     name="Table Schema",
-    description="Schema di una singola tabella: colonne, tipi, PK e FK.",
+    description="Schema dettagliato di una singola tabella: colonne, tipi di dato, chiavi primarie (PK) e relazioni (FK).",
     mime_type="application/json",
 )
 async def resource_table_schema(table_name: str) -> str:
-    """Schema di una tabella specifica come risorsa MCP."""
+    """Esponi lo schema di una tabella specifica come risorsa MCP."""
     table_info = await db_manager.get_table_schema(table_name)
     if table_info is None:
         schema = await db_manager.get_full_schema()
         return _json({
-            "error": f"Tabella '{table_name}' non trovata.",
+            "error": f"La tabella '{table_name}' non è stata trovata nello schema configurato.",
             "available_tables": sorted(schema.keys()),
         })
     return _json(table_info.to_dict())
 
 
-
 @mcp.resource(
     "db://health",
     name="Database Health",
-    description="Stato del server: latenza DB, pool connessioni, cache schema.",
+    description="Statistiche di salute del server: latenza DB in millisecondi, stato del pool di connessioni e validità della cache schema.",
     mime_type="application/json",
 )
 async def resource_health() -> str:
@@ -241,7 +240,7 @@ async def resource_health() -> str:
     return _json(health)
 
 # ══════════════════════════════════════════════
-#  PROMPTS  (registrati dalle funzioni in prompts.py)
+#  PROMPTS (Istruzioni aggiuntive per l'LLM)
 # ══════════════════════════════════════════════
 
 mcp.prompt()(sql_query_builder)
@@ -249,26 +248,31 @@ mcp.prompt()(schema_explorer)
 
 
 # ══════════════════════════════════════════════
-#  ENTRYPOINT
+#  ENTRYPOINT & TRANSPORT STARTUP
 # ══════════════════════════════════════════════
 
-if __name__ == "__main__":
-    transport = srv_cfg.transport  # "stdio" | "sse" | "streamable-http"
+def main() -> None:
+    """Avvia il server sul trasporto scelto in `.env`."""
+    transport = srv_cfg.transport.lower()
 
-    logger.info("Avvio con transport: %s", transport)
+    logger.info("Inizializzazione server MCP completata. Trasporto selezionato: %s", transport)
 
     if transport == "sse":
-        mcp.run(
-            transport="sse",
-            host=srv_cfg.sse_host,
-            port=srv_cfg.sse_port,
-        )
+        # Legacy HTTP Server-Sent Events
+        mcp.run(transport="sse")
     elif transport == "streamable-http":
+        # Nuovo standard MCP 2025 su HTTP
         mcp.run(
             transport="streamable-http",
-            host=srv_cfg.sse_host,
-            port=srv_cfg.sse_port,
+            uvicorn_kwargs={
+                "host": srv_cfg.sse_host,
+                "port": srv_cfg.sse_port,
+            }
         )
     else:
-        # stdio — default per uso locale
+        # Default: STDIO (Standard Input/Output) - Usato per processi figli / chiamate locali
         mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

@@ -95,7 +95,7 @@ class DatabaseManager:
             dsn=self._db_cfg.dsn,
             min_size=self._db_cfg.min_pool,
             max_size=self._db_cfg.max_pool,
-            command_timeout=self._srv_cfg.query_timeout,  # FIX: era max_pool per errore
+            command_timeout=self._srv_cfg.query_timeout,
         )
         logger.info("Pool creato con successo.")
 
@@ -168,7 +168,8 @@ class DatabaseManager:
             return self._schema_cache
 
         pool = self._ensure_pool()
-        db_schema = self._db_cfg.schema
+        db_schema = self._db_cfg.schema_name
+        
 
         async with pool.acquire() as conn:
             # 1. Lista tabelle e viste

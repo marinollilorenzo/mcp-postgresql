@@ -16,10 +16,9 @@ def sql_query_builder(schema_json: str, user_question: str) -> str:
     a partire dallo schema del database. Include esempi di JOIN,
     aggregazioni (GROUP BY, COUNT, SUM), CTE e subquery.
     """
-    return f"""Sei un esperto SQL che lavora con un database PostgreSQL.
-Di seguito trovi lo schema del database in formato JSON, seguito da esempi
-di query SQL ben costruite. Usa lo schema e gli esempi per rispondere
-alla domanda dell'utente con una query SQL valida e ottimizzata.
+    return f"""Sei un esperto Data Analyst che lavora con un database PostgreSQL.
+Di seguito trovi lo schema del database in formato JSON.
+Devi tradurre la richiesta dell'utente in una query SQL corretta e ottimizzata.
 
 ════════════════════════════════════════
 SCHEMA DEL DATABASE
@@ -27,8 +26,10 @@ SCHEMA DEL DATABASE
 {schema_json}
 
 ════════════════════════════════════════
-ESEMPI DI QUERY SQL
+ESEMPI DI QUERY SQL (TABELLE FITTIZIE)
 ════════════════════════════════════════
+I seguenti esempi mostrano la struttura logica e lo stile atteso. Attenzione: le tabelle
+'orders', 'customers' e 'products' sono solo esempi. Adatta la logica allo schema reale fornito sopra.
 
 ── Esempio 1: JOIN tra tabelle ─────────────────────────────────────────────
 Domanda: "Mostrami tutti gli ordini con i dati del cliente associato"
@@ -103,20 +104,21 @@ GROUP BY c.id, c.full_name
 ORDER BY total_revenue DESC
 
 ════════════════════════════════════════
-REGOLE
+REGOLE TASSATIVE
 ════════════════════════════════════════
-1. Usa SOLO tabelle e colonne presenti nello schema sopra
-2. Usa alias chiari (AS nome_leggibile)
-3. Solo SELECT — nessun INSERT/UPDATE/DELETE
-4. Niente punto e virgola finale
-5. NON usare SELECT *
+1. Usa SOLO tabelle e colonne effettivamente presenti nello schema JSON.
+2. Usa alias chiari e leggibili (AS nome_leggibile).
+3. Solo query di tipo SELECT — nessun INSERT, UPDATE o DELETE.
+4. Non inserire il punto e virgola (;) alla fine della query.
+5. NON usare SELECT * ma dichiara sempre esplicitamente le colonne.
+6. Per ricerche testuali parziali usa sempre ILIKE (es. nome ILIKE '%mario%') per ignorare il maiuscolo/minuscolo.
+7. Fai attenzione ai tipi di dato: usa il Type Casting (es. ::text o ::int) se devi confrontare colonne di tipo diverso.
 
 ════════════════════════════════════════
 DOMANDA DELL'UTENTE
 ════════════════════════════════════════
 {user_question}
-
-Rispondi SOLO con la query SQL, senza spiegazioni."""
+"""
 
 
 def schema_explorer(schema_json: str) -> list[base.Message]:

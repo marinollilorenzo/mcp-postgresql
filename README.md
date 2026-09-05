@@ -1,56 +1,101 @@
 # MCP PostgreSQL Server
 
-Server MCP per PostgreSQL che espone schema, validazione e query a un agente AI client (LangChain + MCP).
+Server MCP che dà a un agente AI accesso in **sola lettura** a un database
+PostgreSQL: gli mostra lo schema, valida la SQL che genera prima di eseguirla,
+e la esegue dentro una transazione readonly con un limite di righe.
+
+Il punto non è far scrivere SQL a un modello — è impedirgli di fare danni quando
+la scrive male. La validazione lavora su tre livelli: **sicurezza** (nessuno
+statement di scrittura, nessuna funzione che tocca il filesystem, niente query
+concatenate), **sintassi** (parsing con `sqlglot` sul dialetto PostgreSQL), e
+**semantica** (le tabelle e le colonne citate esistono davvero nello schema).
 
 ## Struttura del progetto
 
 ```
-mcp-postgres/
-├── src/
-│   ├── server.py      # Entry point, tool/resource/prompt handlers
-│   ├── database.py    # Pool asyncpg, introspezione schema, esecuzione query
-│   ├── validator.py   # Validatore SQL (security + sintassi + semantica)
-│   ├── prompts.py     # Prompt MCP con esempi SQL
-│   └── config.py      # Configurazione da .env
-├── requirements.txt
+mcp-postgresql/
+├── main.py                    # Entry point: avvia il server
+├── server_setup/
+│   ├── server.py              # Server FastMCP: tool, resource e prompt
+│   ├── database.py            # Pool asyncpg, introspezione schema con cache, esecuzione
+│   ├── validator.py           # Validatore SQL a 3 livelli (sqlglot)
+│   ├── prompts.py             # Prompt MCP con esempi SQL
+│   └── config.py              # Configurazione da .env (pydantic-settings)
+├── client_setup/
+│   └── agent.py               # Client LangChain di esempio, per provare il server
+├── db/
+│   ├── schema_and_data.sql    # Schema di prova: clienti, ordini, prodotti, dipendenti
+│   └── generate_faker_data.py # Riempie lo schema di dati finti
 ├── .env.example
+├── pyproject.toml
 └── README.md
 ```
 
-## Installazione
+## Come farlo girare
+
+Serve **Python 3.14** e [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-pip install -r requirements.txt
+uv sync
 cp .env.example .env
-# Modifica .env con i tuoi dati
+```
+
+Poi in `.env` vanno almeno `DB_NAME`, `DB_USER` e `DB_PASSWORD`: senza quei tre
+il server si rifiuta di partire, invece di avviarsi e fallire alla prima query.
+
+Per provarlo senza avere un database sottomano, in `db/` c'è uno schema di
+esempio — clienti, ordini, prodotti, dipendenti, recensioni — con un generatore
+di dati finti:
+
+```bash
+psql -d il_tuo_db -f db/schema_and_data.sql
+uv run python db/generate_faker_data.py
+```
+
+## Avvio
+
+```bash
+uv run python main.py
+```
+
+Il trasporto si sceglie da `.env`, non dalla riga di comando:
+
+| `TRANSPORT` | Quando usarlo |
+|---|---|
+| `stdio` | uso locale: Claude Desktop, o un client che lancia il server come sottoprocesso |
+| `streamable-http` | server e agente su macchine diverse — è lo standard MCP attuale |
+| `sse` | come sopra, ma nella forma legacy |
+
+Con `streamable-http` o `sse` valgono anche `SSE_HOST` e `SSE_PORT`.
+
+Per provare il server da terminale c'è un client di esempio che usa LangChain e
+un modello Groq. Vuole `GROQ_API_KEY` in `.env`:
+
+```bash
+uv run python client_setup/agent.py
 ```
 
 ## Configurazione `.env`
 
 | Variabile | Default | Descrizione |
 |---|---|---|
-| `DB_HOST` | localhost | Host PostgreSQL |
-| `DB_PORT` | 5432 | Porta PostgreSQL |
 | `DB_NAME` | — | **Obbligatorio** |
 | `DB_USER` | — | **Obbligatorio** |
 | `DB_PASSWORD` | — | **Obbligatorio** |
+| `DB_HOST` | localhost | Host PostgreSQL |
+| `DB_PORT` | 5432 | Porta PostgreSQL |
 | `DB_SCHEMA` | public | Schema PostgreSQL da esporre |
-| `TRANSPORT` | stdio | `stdio` oppure `sse` |
-| `SSE_HOST` | 0.0.0.0 | Host SSE (solo se TRANSPORT=sse) |
-| `SSE_PORT` | 8000 | Porta SSE (solo se TRANSPORT=sse) |
-| `QUERY_ROW_LIMIT` | 500 | Max righe restituite da execute_query |
+| `DB_MIN_POOL` / `DB_MAX_POOL` | 2 / 10 | Dimensioni del pool di connessioni |
+| `TRANSPORT` | stdio | `stdio`, `sse` o `streamable-http` |
+| `SSE_HOST` | 0.0.0.0 | Host di ascolto (solo per sse / streamable-http) |
+| `SSE_PORT` | 8000 | Porta di ascolto (solo per sse / streamable-http) |
+| `QUERY_ROW_LIMIT` | 500 | Max righe restituite da `execute_query` |
 | `QUERY_TIMEOUT` | 30 | Timeout query in secondi |
+| `MAX_JOINS` | 8 | Max JOIN per query, contro le query che stendono il DB |
+| `SCHEMA_CACHE_TTL` | 300 | Secondi di validità della cache schema (0 = infinita) |
+| `ALLOWED_TABLES` | vuoto | Se valorizzato, l'agente vede **solo** queste tabelle |
+| `DENIED_TABLES` | vuoto | Tabelle nascoste; ignorato se `ALLOWED_TABLES` è pieno |
 | `LOG_LEVEL` | INFO | DEBUG / INFO / WARNING / ERROR |
-
-## Avvio
-
-```bash
-# Modalità stdio (locale, Claude Desktop, LangChain subprocess)
-TRANSPORT=stdio python src/server.py
-
-# Modalità SSE (remoto, agenti su rete)
-TRANSPORT=sse python src/server.py
-```
 
 ---
 

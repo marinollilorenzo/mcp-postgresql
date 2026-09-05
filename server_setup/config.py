@@ -3,24 +3,28 @@ config.py
 ---------
 Configurazione centralizzata caricata da variabili d'ambiente (.env).
 Tutte le impostazioni del server MCP passano da qui.
+Utilizza pydantic-settings per il caricamento automatico dall'ambiente.
 """
 
-import os
-from dotenv import load_dotenv
-from pydantic import BaseModel, field_validator
+from typing import List
+from pathlib import Path
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-load_dotenv()
+ENV_FILE = str(Path(__file__).parent.parent / ".env")
 
 
-class DatabaseConfig(BaseModel):
-    host: str = "localhost"
-    port: int = 5432
-    name: str
-    user: str
-    password: str
-    schema: str = "public"
-    min_pool: int = 2
-    max_pool: int = 10
+class DatabaseConfig(BaseSettings):
+    host: str = Field(default="localhost", alias="DB_HOST")
+    port: int = Field(default=5432, alias="DB_PORT")
+    name: str = Field(..., alias="DB_NAME")
+    user: str = Field(..., alias="DB_USER")
+    password: str = Field(..., alias="DB_PASSWORD")
+    schema_name: str = Field(default="public", alias="DB_SCHEMA")
+    min_pool: int = Field(default=2, alias="DB_MIN_POOL")
+    max_pool: int = Field(default=10, alias="DB_MAX_POOL")
+
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     @field_validator("port")
     @classmethod
@@ -37,66 +41,55 @@ class DatabaseConfig(BaseModel):
         )
 
 
-class ServerConfig(BaseModel):
-    transport: str = "stdio"
-    sse_host: str = "0.0.0.0"
-    sse_port: int = 8000
+class ServerConfig(BaseSettings):
+    transport: str = Field(default="stdio", alias="TRANSPORT")
+    sse_host: str = Field(default="0.0.0.0", alias="SSE_HOST")
+    sse_port: int = Field(default=8000, alias="SSE_PORT")
 
     # Query limits
-    query_row_limit: int = 500
-    query_timeout: int = 30
-    max_joins: int = 8                  # numero massimo di JOIN per query
+    query_row_limit: int = Field(default=500, alias="QUERY_ROW_LIMIT")
+    query_timeout: int = Field(default=30, alias="QUERY_TIMEOUT")
+    max_joins: int = Field(default=8, alias="MAX_JOINS")
 
     # Cache
-    schema_cache_ttl: int = 300         # secondi (0 = nessun TTL, cache infinita)
+    schema_cache_ttl: int = Field(default=300, alias="SCHEMA_CACHE_TTL")
 
-    # Access control
-    # allowed_tables: se valorizzato, solo queste tabelle sono visibili agli agenti
-    # denied_tables:  queste tabelle vengono nascoste
-    # allowed_tables ha precedenza su denied_tables
-    allowed_tables: list[str] = []
-    denied_tables: list[str] = []
+    # Access control: Letti come stringhe per aggirare il crash JSON di Pydantic
+    raw_allowed_tables: str = Field(default="", alias="ALLOWED_TABLES")
+    raw_denied_tables: str = Field(default="", alias="DENIED_TABLES")
 
-    log_level: str = "INFO"
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     @field_validator("transport")
     @classmethod
     def validate_transport(cls, v: str) -> str:
+        v = v.lower()
         allowed = {"stdio", "sse", "streamable-http"}
-        if v.lower() not in allowed:
+        if v not in allowed:
             raise ValueError(f"TRANSPORT deve essere uno di: {allowed}")
-        return v.lower()
+        return v
+
+    @property
+    def allowed_tables(self) -> List[str]:
+        """Converte la stringa ALLOWED_TABLES in una lista Python in modo sicuro."""
+        if not self.raw_allowed_tables.strip():
+            return []
+        return [t.strip().lower() for t in self.raw_allowed_tables.split(",") if t.strip()]
+
+    @property
+    def denied_tables(self) -> List[str]:
+        """Converte la stringa DENIED_TABLES in una lista Python in modo sicuro."""
+        if not self.raw_denied_tables.strip():
+            return []
+        return [t.strip().lower() for t in self.raw_denied_tables.split(",") if t.strip()]
 
 
 def load_config() -> tuple[DatabaseConfig, ServerConfig]:
-    """Carica e valida tutta la configurazione dall'ambiente."""
-    db_cfg = DatabaseConfig(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "5432")),
-        name=os.environ["DB_NAME"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        schema=os.getenv("DB_SCHEMA", "public"),
-        min_pool=int(os.getenv("DB_MIN_POOL", "2")),
-        max_pool=int(os.getenv("DB_MAX_POOL", "10")),
-    )
-
-    def _parse_table_list(env_var: str) -> list[str]:
-        raw = os.getenv(env_var, "").strip()
-        if not raw:
-            return []
-        return [t.strip().lower() for t in raw.split(",") if t.strip()]
-
-    srv_cfg = ServerConfig(
-        transport=os.getenv("TRANSPORT", "stdio"),
-        sse_host=os.getenv("SSE_HOST", "0.0.0.0"),
-        sse_port=int(os.getenv("SSE_PORT", "8000")),
-        query_row_limit=int(os.getenv("QUERY_ROW_LIMIT", "500")),
-        query_timeout=int(os.getenv("QUERY_TIMEOUT", "30")),
-        max_joins=int(os.getenv("MAX_JOINS", "8")),
-        schema_cache_ttl=int(os.getenv("SCHEMA_CACHE_TTL", "300")),
-        allowed_tables=_parse_table_list("ALLOWED_TABLES"),
-        denied_tables=_parse_table_list("DENIED_TABLES"),
-        log_level=os.getenv("LOG_LEVEL", "INFO"),
-    )
+    """
+    Carica e valida tutta la configurazione dall'ambiente.
+    """
+    db_cfg = DatabaseConfig()
+    srv_cfg = ServerConfig()
     return db_cfg, srv_cfg
